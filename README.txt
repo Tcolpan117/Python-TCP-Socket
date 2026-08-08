@@ -105,9 +105,3 @@ NOTES
 - Solution history is saved between logins.
 - Invalid commands return 300 invalid command.
 - Commands with an incorrect format return 301 message format error.
-
-
-KNOWN ISSUE
------------
-Incoming messages may appear while a user is typing because the client
-can receive messages at any time. This does not prevent commands from working.
