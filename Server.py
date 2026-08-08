@@ -3,11 +3,15 @@ import os
 import socket
 import threading
 
+# Server configuration
 HOST = "0.0.0.0"
 SERVER_PORT = 4270
 LOGIN_FILE = "logins.txt"
 
+# Tracks which logged-in username belongs to which connected socket.
 active_users = {}
+
+# Locks protect shared data when multiple client threads run at once.
 active_lock = threading.Lock()
 file_lock = threading.Lock()
 server_socket = None
@@ -15,6 +19,7 @@ server_running = True
 
 
 def load_users():
+    # Read allowed usernames and passwords from logins.txt.
     users = {}
     with open(LOGIN_FILE, "r", encoding="utf-8") as file:
         for line in file:
@@ -28,6 +33,7 @@ USERS = load_users()
 
 
 def send(sock, message):
+    # Send one newline-terminated message to a client.
     try:
         sock.sendall((message + "\n").encode("utf-8"))
         return True
@@ -36,20 +42,24 @@ def send(sock, message):
 
 
 def clean_number(value):
+    # Display whole numbers without an unnecessary .0.
     return str(int(value)) if float(value).is_integer() else str(value)
 
 
 def history_file(username):
+    # Return the filename used to store one user's SOLVE history.
     return f"{username}_solutions.txt"
 
 
 def save_history(username, text):
+    # Append one SOLVE result or error to the user's history file.
     with file_lock:
         with open(history_file(username), "a", encoding="utf-8") as file:
             file.write(text + "\n")
 
 
 def read_history(username):
+    # Read all saved SOLVE entries for one user.
     filename = history_file(username)
     if not os.path.exists(filename):
         return []
@@ -60,11 +70,13 @@ def read_history(username):
 
 
 def solve(parts):
+    # Process SOLVE commands for circles and rectangles.
     if len(parts) < 2:
         return "301 message format error", None
 
     flag = parts[1]
 
+    # Circle format: SOLVE -c radius
     if flag == "-c":
         if len(parts) == 2:
             return "Error:  No radius found", "Error:  No radius found"
@@ -87,6 +99,7 @@ def solve(parts):
         history = f"radius {clean_number(radius)}:  {response}"
         return response, history
 
+    # Rectangle format: SOLVE -r side OR SOLVE -r side1 side2
     if flag == "-r":
         if len(parts) == 2:
             return "Error:  No sides found", "Error:  No sides found"
@@ -118,6 +131,7 @@ def solve(parts):
 
 
 def send_list(sock, usernames):
+    # Send saved solution history for one or more users.
     for username in usernames:
         send(sock, username)
         entries = read_history(username)
@@ -132,6 +146,7 @@ def send_list(sock, usernames):
 
 
 def remove_user(username, sock):
+    # Remove a user from the active-user table when they disconnect.
     if username is None:
         return
 
@@ -141,6 +156,7 @@ def remove_user(username, sock):
 
 
 def handle_message(sock, sender, command_line):
+    # Route MESSAGE commands through the server to connected clients.
     parts = command_line.split(maxsplit=2)
 
     if len(parts) != 3 or not parts[2].strip():
@@ -152,6 +168,7 @@ def handle_message(sock, sender, command_line):
     print("Message from client:")
     print(text)
 
+    # Only root may broadcast a message to all logged-in users.
     if recipient == "-all":
         if sender != "root":
             send(sock, "Error:  you are not the root user")
@@ -194,6 +211,7 @@ def handle_message(sock, sender, command_line):
 
 
 def stop_server(requesting_socket):
+    # Confirm shutdown, close client sockets, and stop the server.
     global server_running
 
     send(requesting_socket, "200 OK")
@@ -222,6 +240,7 @@ def stop_server(requesting_socket):
 
 
 def handle_client(sock, address):
+    # Handle one client connection in its own thread.
     username = None
     buffer = ""
 
@@ -245,6 +264,7 @@ def handle_client(sock, address):
                 parts = line.split()
                 command = parts[0].upper()
 
+                # Clients must LOGIN successfully before using other commands.
                 if username is None:
                     if command != "LOGIN":
                         send(sock, "FAILURE: Please login before using server commands.")
@@ -273,16 +293,19 @@ def handle_client(sock, address):
                     send(sock, "SUCCESS")
                     continue
 
+                # Handle commands after login.
                 if command == "LOGIN":
                     send(sock, "FAILURE: User is already logged in.")
 
                 elif command == "SOLVE":
+                    # Calculate geometry and save the result.
                     response, history = solve(parts)
                     send(sock, response)
                     if history:
                         save_history(username, history)
 
                 elif command == "LIST":
+                    # LIST is personal; LIST -all is restricted to root.
                     if len(parts) == 1:
                         send_list(sock, [username])
                     elif len(parts) == 2 and parts[1] == "-all":
@@ -294,9 +317,11 @@ def handle_client(sock, address):
                         send(sock, "301 message format error")
 
                 elif command == "MESSAGE":
+                    # Send a private message or root broadcast.
                     handle_message(sock, username, line)
 
                 elif command == "LOGOUT":
+                    # LOGOUT closes only this client.
                     if len(parts) != 1:
                         send(sock, "301 message format error")
                     else:
@@ -304,6 +329,7 @@ def handle_client(sock, address):
                         return
 
                 elif command == "SHUTDOWN":
+                    # SHUTDOWN stops the complete server.
                     if len(parts) != 1:
                         send(sock, "301 message format error")
                     else:
@@ -326,6 +352,7 @@ def handle_client(sock, address):
 
 
 def main():
+    # Create the TCP server socket and continuously accept clients.
     global server_socket
 
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -343,6 +370,7 @@ def main():
             except OSError:
                 break
 
+            # Each client gets its own thread so clients can work simultaneously.
             threading.Thread(
                 target=handle_client,
                 args=(client, address),
